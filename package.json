@@ -1,0 +1,21 @@
+{
+  "name": "bellflower",
+  "version": "0.1.0",
+  "description": "BellFlower lightweight cross-network virtual LAN demo control plane.",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "client": "node src/client.js",
+    "test": "node --test"
+  },
+  "keywords": [
+    "bellflower",
+    "p2p",
+    "virtual-lan",
+    "nat-traversal"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  }
+}
