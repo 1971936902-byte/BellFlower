@@ -1,7 +1,7 @@
 import http from 'node:http';
 import { URL } from 'node:url';
 import { BellFlowerStore } from './store.js';
-import { buildPeerView, isStale, normalizeJoinRequest } from './network.js';
+import { buildConnectivityProbe, buildPeerView, isStale, normalizeJoinRequest, normalizeProbeRequest } from './network.js';
 import { acceptWebSocket, decodeFrames, encodeFrame } from './websocket.js';
 
 const PORT = Number(process.env.PORT || 8787);
@@ -104,7 +104,20 @@ async function route(req, res) {
     return;
   }
 
-  if (req.method === 'GET' && url.pathname.startsWith('/api/networks/')) {
+  if (req.method === 'POST' && url.pathname === '/api/leave') {
+    const body = await readJson(req);
+    const networkId = String(body.networkId || '');
+    const device = store.leave(networkId, String(body.deviceId || ''));
+    if (!device) {
+      sendJson(res, 404, { error: 'device not found' });
+      return;
+    }
+    sendJson(res, 200, { ok: true, device });
+    broadcastNetwork(networkId);
+    return;
+  }
+
+  if (url.pathname.startsWith('/api/networks/')) {
     const parts = url.pathname.split('/').filter(Boolean);
     const networkId = parts[2];
     const network = store.getNetwork(networkId);
@@ -120,6 +133,20 @@ async function route(req, res) {
         return;
       }
       sendJson(res, 200, { networkId, deviceId: device.id, peers: buildPeerView(device, network.devices) });
+      return;
+    }
+
+    if (req.method === 'POST' && parts[3] === 'probe') {
+      const probeRequest = normalizeProbeRequest(await readJson(req));
+      const source = store.findDevice(networkId, probeRequest.sourceDeviceId);
+      const target = store.findDevice(networkId, probeRequest.targetDeviceId);
+      const result = buildConnectivityProbe(source, target, probeRequest);
+      sendJson(res, result.reachable ? 200 : 409, { networkId, ...result });
+      return;
+    }
+
+    if (req.method !== 'GET') {
+      sendJson(res, 405, { error: 'method not allowed' });
       return;
     }
 

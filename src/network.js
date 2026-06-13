@@ -7,6 +7,7 @@ export const MAX_DEVICE_NAME_LENGTH = 64;
 export const MAX_PLATFORM_LENGTH = 32;
 export const MAX_ENDPOINTS = 8;
 export const MAX_CAPABILITIES = 16;
+export const MAX_PROBE_PORT = 65_535;
 
 export function normalizeJoinRequest(raw) {
   const body = typeof raw === 'string' ? JSON.parse(raw || '{}') : raw || {};
@@ -24,6 +25,34 @@ export function normalizeJoinRequest(raw) {
     platform: truncate(String(body.platform || 'unknown').trim() || 'unknown', MAX_PLATFORM_LENGTH),
     endpoints: normalizeStringList(body.endpoints, MAX_ENDPOINTS, 128),
     capabilities: normalizeStringList(body.capabilities, MAX_CAPABILITIES, 32)
+  };
+}
+
+export function normalizeProbeRequest(raw) {
+  const body = typeof raw === 'string' ? JSON.parse(raw || '{}') : raw || {};
+  const sourceDeviceId = normalizeDeviceId(body.sourceDeviceId);
+  const targetDeviceId = normalizeDeviceId(body.targetDeviceId);
+  const protocol = normalizeProbeProtocol(body.protocol);
+  const port = Number(body.port || 0);
+
+  if (!sourceDeviceId) {
+    throw new Error('sourceDeviceId is required');
+  }
+  if (!targetDeviceId) {
+    throw new Error('targetDeviceId is required');
+  }
+  if (sourceDeviceId === targetDeviceId) {
+    throw new Error('sourceDeviceId and targetDeviceId must be different');
+  }
+  if (protocol !== 'icmp' && (!Number.isInteger(port) || port < 1 || port > MAX_PROBE_PORT)) {
+    throw new Error(`port must be between 1 and ${MAX_PROBE_PORT}`);
+  }
+
+  return {
+    sourceDeviceId,
+    targetDeviceId,
+    protocol,
+    port: protocol === 'icmp' ? null : port
   };
 }
 
@@ -81,6 +110,30 @@ export function buildPeerView(device, peers, now = Date.now()) {
     }));
 }
 
+export function buildConnectivityProbe(source, target, options = {}) {
+  const now = options.now || Date.now();
+  const protocol = options.protocol || 'icmp';
+  const port = options.port ?? null;
+  const sourceOnline = source?.status === 'online';
+  const targetOnline = target?.status === 'online';
+  const connectionMode = source && target ? inferConnectionMode(source, target) : null;
+  const reachable = Boolean(sourceOnline && targetOnline && connectionMode);
+  const latencyMs = reachable ? estimateLatency(target, now) + (connectionMode === 'relay' ? 20 : 0) : null;
+
+  return {
+    reachable,
+    protocol,
+    port,
+    source: source ? deviceProbeSummary(source) : null,
+    target: target ? deviceProbeSummary(target) : null,
+    connectionMode: reachable ? connectionMode : null,
+    relayRegion: reachable && connectionMode === 'relay' ? DEFAULT_RELAY_REGION : null,
+    latencyMs,
+    checkedAt: new Date(now).toISOString(),
+    reason: probeReason(source, target, reachable)
+  };
+}
+
 export function estimateLatency(device, now = Date.now()) {
   if (device.status !== 'online') {
     return null;
@@ -123,6 +176,14 @@ function normalizeDeviceId(value) {
   return /^[a-zA-Z0-9_.:-]{3,128}$/.test(id) ? id : null;
 }
 
+function normalizeProbeProtocol(value) {
+  const protocol = String(value || 'icmp').trim().toLowerCase();
+  if (['icmp', 'tcp', 'http'].includes(protocol)) {
+    return protocol;
+  }
+  throw new Error('protocol must be one of icmp, tcp, http');
+}
+
 function normalizeStringList(value, maxItems, maxLength) {
   if (!Array.isArray(value)) {
     return [];
@@ -136,4 +197,29 @@ function normalizeStringList(value, maxItems, maxLength) {
 
 function truncate(value, maxLength) {
   return value.length > maxLength ? value.slice(0, maxLength) : value;
+}
+
+function deviceProbeSummary(device) {
+  return {
+    id: device.id,
+    name: device.name,
+    virtualIp: device.virtualIp,
+    status: device.status
+  };
+}
+
+function probeReason(source, target, reachable) {
+  if (!source) {
+    return 'source_not_found';
+  }
+  if (!target) {
+    return 'target_not_found';
+  }
+  if (source.status !== 'online') {
+    return 'source_offline';
+  }
+  if (target.status !== 'online') {
+    return 'target_offline';
+  }
+  return reachable ? 'ok' : 'unreachable';
 }

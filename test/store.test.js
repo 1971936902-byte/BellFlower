@@ -27,6 +27,22 @@ test('isolates devices with the same stable id across different network keys', (
   assert.equal(second.device.virtualIp, '10.144.0.2');
 });
 
+test('marks a device offline when it leaves', () => {
+  const store = new BellFlowerStore(tempDataPath());
+  const joined = store.join(normalizeJoinRequest({ networkKey: 'secret-123', deviceId: 'win-01' }));
+
+  const left = store.leave(joined.networkId, joined.device.id);
+
+  assert.equal(left.status, 'offline');
+  assert.equal(store.findDevice(joined.networkId, joined.device.id).status, 'offline');
+});
+
+test('returns null when leaving an unknown device', () => {
+  const store = new BellFlowerStore(tempDataPath());
+
+  assert.equal(store.leave('missing-network', 'missing-device'), null);
+});
+
 test('backs up corrupt state files and starts with an empty store', () => {
   const filePath = tempDataPath();
   fs.mkdirSync(path.dirname(filePath), { recursive: true });

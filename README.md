@@ -2,7 +2,7 @@
 
 风铃草 BellFlower 是一个轻量跨网络虚拟局域网 Demo。本仓库实现需求说明书中的控制面最小可用闭环：设备用同一组网密钥入网、自动分配 `10.144.0.0/24` 虚拟 IP、同步在线状态、生成点对点优先和中继降级的链路视图，并提供网页控制台与 CLI 客户端用于验证。
 
-> 当前 Demo 不直接安装系统 TUN/TAP 驱动，也不下发真实 WireGuard 配置。Windows、iOS、Android 的 WireGuard/TUN 集成需要平台权限、签名和发布流水线，已保留为下一阶段客户端内核对接点。
+> 当前 Demo 不直接安装系统 TUN/TAP 驱动，也不下发真实 WireGuard 配置。Windows、iOS、Android 的 WireGuard/TUN 集成需要平台权限、签名和发布流水线，已保留为下一阶段客户端内核对接点。联通性探测 API 是控制面模拟验收能力，不等同于系统级 `ping` 或真实端口转发。
 
 ## 功能
 
@@ -11,6 +11,7 @@
 - 虚拟 IP：从 `10.144.0.2` 开始自动分配，网段为 `10.144.0.0/24`。
 - 状态监控：心跳保持在线，超时自动离线。
 - 链路视图：UDP 能力可用时标记为 `p2p`，否则降级为 `relay`；提供独立 peers API 查询链路详情。
+- 联通性探测：提供 Demo 级 Ping/TCP/HTTP 探测 API，用控制面状态模拟多设备链路可达性。
 - 控制台：浏览器打开服务地址即可查看设备列表。
 - CLI 客户端：用于模拟 Windows、iOS、Android 设备入网和心跳。
 
@@ -74,6 +75,18 @@ content-type: application/json
 }
 ```
 
+### 主动离网
+
+```http
+POST /api/leave
+content-type: application/json
+
+{
+  "networkId": "返回的 networkId",
+  "deviceId": "返回的 device.id"
+}
+```
+
 ### 查询网络
 
 ```http
@@ -85,6 +98,22 @@ GET /api/networks/{networkId}
 ```http
 GET /api/networks/{networkId}/peers/{deviceId}
 ```
+
+### Demo 联通性探测
+
+```http
+POST /api/networks/{networkId}/probe
+content-type: application/json
+
+{
+  "sourceDeviceId": "windows-pc-01",
+  "targetDeviceId": "iphone-01",
+  "protocol": "http",
+  "port": 3000
+}
+```
+
+在线设备会返回 `reachable=true`、链路模式、估算延迟和 Relay 区域。目标离线、源设备离线或设备不存在时返回 `409` 与失败原因。
 
 ## WebSocket 协议
 

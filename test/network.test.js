@@ -1,6 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { allocateVirtualIp, buildPeerView, inferConnectionMode, keyToNetworkId, normalizeJoinRequest, shouldReserveIp } from '../src/network.js';
+import {
+  allocateVirtualIp,
+  buildConnectivityProbe,
+  buildPeerView,
+  inferConnectionMode,
+  keyToNetworkId,
+  normalizeJoinRequest,
+  normalizeProbeRequest,
+  shouldReserveIp
+} from '../src/network.js';
 
 test('normalizes a valid join request', () => {
   const request = normalizeJoinRequest({ networkKey: 'secret-123', name: ' iPhone ', platform: 'ios' });
@@ -96,4 +105,95 @@ test('builds a peer view with connection mode and latency', () => {
   assert.equal(peers.length, 1);
   assert.equal(peers[0].connectionMode, 'p2p');
   assert.equal(peers[0].latencyMs, 12);
+});
+
+test('normalizes connectivity probe requests', () => {
+  const request = normalizeProbeRequest({
+    sourceDeviceId: 'win-01',
+    targetDeviceId: 'ios-01',
+    protocol: 'HTTP',
+    port: 3000
+  });
+
+  assert.deepEqual(request, {
+    sourceDeviceId: 'win-01',
+    targetDeviceId: 'ios-01',
+    protocol: 'http',
+    port: 3000
+  });
+});
+
+test('rejects invalid connectivity probe requests', () => {
+  assert.throws(() => normalizeProbeRequest({ sourceDeviceId: 'same', targetDeviceId: 'same' }), /must be different/);
+  assert.throws(() => normalizeProbeRequest({ sourceDeviceId: 'a-1', targetDeviceId: 'b-1', protocol: 'udp' }), /protocol/);
+  assert.throws(() => normalizeProbeRequest({ sourceDeviceId: 'a-1', targetDeviceId: 'b-1', protocol: 'tcp', port: 0 }), /port/);
+});
+
+test('builds a reachable p2p connectivity probe', () => {
+  const now = Date.parse('2026-06-14T00:00:00.000Z');
+  const source = {
+    id: 'win-01',
+    name: 'Windows',
+    virtualIp: '10.144.0.2',
+    status: 'online',
+    capabilities: ['udp'],
+    endpoints: ['udp:1.1.1.1:51820'],
+    lastSeenAt: new Date(now).toISOString()
+  };
+  const target = {
+    id: 'ios-01',
+    name: 'iPhone',
+    virtualIp: '10.144.0.3',
+    status: 'online',
+    capabilities: ['udp'],
+    endpoints: ['udp:2.2.2.2:51820'],
+    lastSeenAt: new Date(now).toISOString()
+  };
+
+  const probe = buildConnectivityProbe(source, target, { protocol: 'http', port: 3000, now });
+
+  assert.equal(probe.reachable, true);
+  assert.equal(probe.connectionMode, 'p2p');
+  assert.equal(probe.reason, 'ok');
+  assert.equal(probe.latencyMs, 12);
+});
+
+test('builds a relay connectivity probe when udp path is unavailable', () => {
+  const now = Date.parse('2026-06-14T00:00:00.000Z');
+  const source = {
+    id: 'win-01',
+    name: 'Windows',
+    virtualIp: '10.144.0.2',
+    status: 'online',
+    capabilities: ['relay'],
+    endpoints: [],
+    lastSeenAt: new Date(now).toISOString()
+  };
+  const target = {
+    id: 'ios-01',
+    name: 'iPhone',
+    virtualIp: '10.144.0.3',
+    status: 'online',
+    capabilities: ['udp'],
+    endpoints: ['udp:2.2.2.2:51820'],
+    lastSeenAt: new Date(now).toISOString()
+  };
+
+  const probe = buildConnectivityProbe(source, target, { protocol: 'icmp', now });
+
+  assert.equal(probe.reachable, true);
+  assert.equal(probe.connectionMode, 'relay');
+  assert.equal(probe.relayRegion, 'cn-light-relay');
+  assert.equal(probe.latencyMs, 32);
+});
+
+test('reports offline probe targets as unreachable', () => {
+  const source = { id: 'win-01', name: 'Windows', virtualIp: '10.144.0.2', status: 'online', capabilities: ['udp'], endpoints: ['udp:1.1.1.1:1'] };
+  const target = { id: 'ios-01', name: 'iPhone', virtualIp: '10.144.0.3', status: 'offline', capabilities: ['udp'], endpoints: ['udp:2.2.2.2:2'] };
+
+  const probe = buildConnectivityProbe(source, target);
+
+  assert.equal(probe.reachable, false);
+  assert.equal(probe.connectionMode, null);
+  assert.equal(probe.reason, 'target_offline');
 });
