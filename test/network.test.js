@@ -4,6 +4,7 @@ import {
   allocateVirtualIp,
   buildConnectivityProbe,
   buildPeerView,
+  findServiceEndpoint,
   inferConnectionMode,
   keyToNetworkId,
   normalizeJoinRequest,
@@ -30,6 +31,22 @@ test('normalizes optional stable device ids and caps list sizes', () => {
   assert.equal(request.deviceId, 'ios-device-01');
   assert.equal(request.endpoints.length, 8);
   assert.equal(request.capabilities.length, 16);
+});
+
+test('normalizes service endpoints on join', () => {
+  const request = normalizeJoinRequest({
+    networkKey: 'secret-123',
+    serviceEndpoints: [
+      'http://127.0.0.1:3000/health',
+      'tcp:localhost:8080',
+      'invalid-endpoint'
+    ]
+  });
+
+  assert.deepEqual(request.serviceEndpoints, [
+    { protocol: 'http', host: '127.0.0.1', port: 3000, path: '/health', secure: false },
+    { protocol: 'tcp', host: 'localhost', port: 8080, path: '/', secure: false }
+  ]);
 });
 
 test('rejects weak network keys', () => {
@@ -156,6 +173,18 @@ test('builds a reachable p2p connectivity probe', () => {
   assert.equal(probe.connectionMode, 'p2p');
   assert.equal(probe.reason, 'ok');
   assert.equal(probe.latencyMs, 12);
+});
+
+test('finds a matching service endpoint for a probe', () => {
+  const device = {
+    serviceEndpoints: [
+      { protocol: 'http', host: '127.0.0.1', port: 3000, path: '/', secure: false },
+      { protocol: 'tcp', host: '127.0.0.1', port: 8080, path: '/', secure: false }
+    ]
+  };
+
+  assert.deepEqual(findServiceEndpoint(device, 'http', 3000), device.serviceEndpoints[0]);
+  assert.equal(findServiceEndpoint(device, 'http', 9999), null);
 });
 
 test('builds a relay connectivity probe when udp path is unavailable', () => {

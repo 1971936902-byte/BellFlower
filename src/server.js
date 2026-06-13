@@ -1,7 +1,9 @@
 import http from 'node:http';
+import https from 'node:https';
+import net from 'node:net';
 import { URL } from 'node:url';
 import { BellFlowerStore } from './store.js';
-import { buildConnectivityProbe, buildPeerView, isStale, normalizeJoinRequest, normalizeProbeRequest } from './network.js';
+import { buildConnectivityProbe, buildPeerView, findServiceEndpoint, isStale, normalizeJoinRequest, normalizeProbeRequest } from './network.js';
 import { acceptWebSocket, decodeFrames, encodeFrame } from './websocket.js';
 
 const PORT = Number(process.env.PORT || 8787);
@@ -140,7 +142,7 @@ async function route(req, res) {
       const probeRequest = normalizeProbeRequest(await readJson(req));
       const source = store.findDevice(networkId, probeRequest.sourceDeviceId);
       const target = store.findDevice(networkId, probeRequest.targetDeviceId);
-      const result = buildConnectivityProbe(source, target, probeRequest);
+      const result = await buildProbeResult(source, target, probeRequest);
       sendJson(res, result.reachable ? 200 : 409, { networkId, ...result });
       return;
     }
@@ -241,9 +243,97 @@ function publicNetwork(network) {
       platform: device.platform,
       virtualIp: device.virtualIp,
       status: device.status,
+      serviceEndpoints: device.serviceEndpoints || [],
       lastSeenAt: device.lastSeenAt
     }))
   };
+}
+
+async function buildProbeResult(source, target, probeRequest) {
+  const result = buildConnectivityProbe(source, target, probeRequest);
+  const endpoint = findServiceEndpoint(target, probeRequest.protocol, probeRequest.port);
+  if (!result.reachable || !endpoint || probeRequest.protocol === 'icmp') {
+    return result;
+  }
+
+  return probeServiceEndpoint(endpoint, result);
+}
+
+async function probeServiceEndpoint(endpoint, result) {
+  const startedAt = Date.now();
+  try {
+    if (endpoint.protocol === 'tcp') {
+      await probeTcpEndpoint(endpoint);
+      return {
+        ...result,
+        evidence: 'service-endpoint',
+        serviceEndpoint: endpoint,
+        latencyMs: Date.now() - startedAt,
+        reason: 'ok'
+      };
+    }
+
+    const httpStatus = await probeHttpEndpoint(endpoint);
+    return {
+      ...result,
+      evidence: 'service-endpoint',
+      serviceEndpoint: endpoint,
+      latencyMs: Date.now() - startedAt,
+      httpStatus,
+      reason: 'ok'
+    };
+  } catch (error) {
+    return {
+      ...result,
+      reachable: false,
+      evidence: 'service-endpoint',
+      serviceEndpoint: endpoint,
+      latencyMs: null,
+      reason: 'service_probe_failed',
+      error: error.message
+    };
+  }
+}
+
+function probeTcpEndpoint(endpoint) {
+  return new Promise((resolve, reject) => {
+    const socket = net.createConnection({ host: endpoint.host, port: endpoint.port });
+    const timer = setTimeout(() => {
+      socket.destroy();
+      reject(new Error('tcp probe timeout'));
+    }, 2000);
+
+    socket.on('connect', () => {
+      clearTimeout(timer);
+      socket.end();
+      resolve();
+    });
+    socket.on('error', (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+  });
+}
+
+function probeHttpEndpoint(endpoint) {
+  const client = endpoint.secure ? https : http;
+  return new Promise((resolve, reject) => {
+    const req = client.request({
+      method: 'GET',
+      host: endpoint.host,
+      port: endpoint.port,
+      path: endpoint.path || '/',
+      timeout: 2000
+    }, (res) => {
+      res.resume();
+      res.on('end', () => resolve(res.statusCode));
+    });
+    req.on('timeout', () => {
+      req.destroy(new Error('http probe timeout'));
+    });
+    req.on('error', reject);
+    req.end();
+  });
 }
 
 function readJson(req) {
@@ -488,6 +578,9 @@ function dashboardHtml() {
                   </select>
                 </label>
               </div>
+              <label>本机服务端点
+                <input name="serviceEndpoint" placeholder="http://127.0.0.1:3000">
+              </label>
               <button type="submit"><span aria-hidden="true">+</span><span>加入网络</span></button>
             </form>
           </div>
@@ -576,6 +669,8 @@ function dashboardHtml() {
       const payload = Object.fromEntries(form.entries());
       payload.capabilities = ['udp', 'relay'];
       payload.endpoints = ['udp:0.0.0.0:51820'];
+      payload.serviceEndpoints = payload.serviceEndpoint ? [payload.serviceEndpoint] : [];
+      delete payload.serviceEndpoint;
       setJoinState('连接中', false);
       try {
         const joined = await request('/api/join', { method: 'POST', body: payload });
@@ -636,7 +731,7 @@ function dashboardHtml() {
         };
         const result = await request('/api/networks/' + state.networkId + '/probe', { method: 'POST', body: payload });
         probeResult.className = 'result ok';
-        setProbeResult('链路可达', result.connectionMode.toUpperCase() + ' / ' + result.latencyMs + ' ms');
+        setProbeResult('链路可达', result.connectionMode.toUpperCase() + ' / ' + result.latencyMs + ' ms / ' + result.evidence);
       } catch (error) {
         probeResult.className = 'result fail';
         setProbeResult('链路不可达', error.message);

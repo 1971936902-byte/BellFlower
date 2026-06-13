@@ -43,6 +43,7 @@ export class BellFlowerStore {
       existingDevice.platform = joinRequest.platform;
       existingDevice.status = 'online';
       existingDevice.endpoints = joinRequest.endpoints;
+      existingDevice.serviceEndpoints = joinRequest.serviceEndpoints;
       existingDevice.capabilities = joinRequest.capabilities;
       existingDevice.lastSeenAt = nowIso;
       this.save();
@@ -56,6 +57,7 @@ export class BellFlowerStore {
       virtualIp: allocateVirtualIp(network.devices, network.cidr, { leaseReclaimMs: this.leaseReclaimMs }),
       status: 'online',
       endpoints: joinRequest.endpoints,
+      serviceEndpoints: joinRequest.serviceEndpoints,
       capabilities: joinRequest.capabilities,
       joinedAt: nowIso,
       lastSeenAt: nowIso
@@ -88,6 +90,9 @@ export class BellFlowerStore {
     device.lastSeenAt = new Date().toISOString();
     if (Array.isArray(patch.endpoints)) {
       device.endpoints = patch.endpoints.map(String);
+    }
+    if (Array.isArray(patch.serviceEndpoints)) {
+      device.serviceEndpoints = patch.serviceEndpoints;
     }
     if (Array.isArray(patch.capabilities)) {
       device.capabilities = patch.capabilities.map(String);

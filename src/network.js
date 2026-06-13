@@ -6,6 +6,7 @@ export const DEFAULT_LEASE_RECLAIM_MS = 24 * 60 * 60 * 1000;
 export const MAX_DEVICE_NAME_LENGTH = 64;
 export const MAX_PLATFORM_LENGTH = 32;
 export const MAX_ENDPOINTS = 8;
+export const MAX_SERVICE_ENDPOINTS = 8;
 export const MAX_CAPABILITIES = 16;
 export const MAX_PROBE_PORT = 65_535;
 
@@ -24,6 +25,7 @@ export function normalizeJoinRequest(raw) {
     name: name || defaultDeviceName(),
     platform: truncate(String(body.platform || 'unknown').trim() || 'unknown', MAX_PLATFORM_LENGTH),
     endpoints: normalizeStringList(body.endpoints, MAX_ENDPOINTS, 128),
+    serviceEndpoints: normalizeServiceEndpoints(body.serviceEndpoints),
     capabilities: normalizeStringList(body.capabilities, MAX_CAPABILITIES, 32)
   };
 }
@@ -130,8 +132,23 @@ export function buildConnectivityProbe(source, target, options = {}) {
     relayRegion: reachable && connectionMode === 'relay' ? DEFAULT_RELAY_REGION : null,
     latencyMs,
     checkedAt: new Date(now).toISOString(),
+    evidence: 'control-plane',
+    serviceEndpoint: findServiceEndpoint(target, protocol, port),
     reason: probeReason(source, target, reachable)
   };
+}
+
+export function findServiceEndpoint(device, protocol, port) {
+  if (!device || !Array.isArray(device.serviceEndpoints)) {
+    return null;
+  }
+
+  return device.serviceEndpoints.find((endpoint) => {
+    if (endpoint.protocol !== protocol) {
+      return false;
+    }
+    return protocol === 'icmp' || endpoint.port === port;
+  }) || null;
 }
 
 export function estimateLatency(device, now = Date.now()) {
@@ -193,6 +210,86 @@ function normalizeStringList(value, maxItems, maxLength) {
     .map((item) => truncate(String(item || '').trim(), maxLength))
     .filter(Boolean)
     .slice(0, maxItems);
+}
+
+function normalizeServiceEndpoints(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((endpoint) => normalizeServiceEndpoint(endpoint))
+    .filter(Boolean)
+    .slice(0, MAX_SERVICE_ENDPOINTS);
+}
+
+function normalizeServiceEndpoint(endpoint) {
+  if (typeof endpoint === 'string') {
+    return normalizeServiceEndpointString(endpoint);
+  }
+
+  if (!endpoint || typeof endpoint !== 'object') {
+    return null;
+  }
+
+  const protocol = normalizeServiceProtocol(endpoint.protocol);
+  const host = normalizeHost(endpoint.host);
+  const port = Number(endpoint.port || 0);
+  const path = truncate(String(endpoint.path || '/').trim() || '/', 128);
+
+  if (!protocol || !host || !Number.isInteger(port) || port < 1 || port > MAX_PROBE_PORT) {
+    return null;
+  }
+
+  return { protocol, host, port, path: path.startsWith('/') ? path : `/${path}`, secure: Boolean(endpoint.secure) };
+}
+
+function normalizeServiceEndpointString(value) {
+  const text = truncate(String(value || '').trim(), 256);
+  if (!text) {
+    return null;
+  }
+
+  if (text.startsWith('http://') || text.startsWith('https://')) {
+    try {
+      const url = new URL(text);
+      return {
+        protocol: 'http',
+        host: url.hostname,
+        port: Number(url.port || (url.protocol === 'https:' ? 443 : 80)),
+        path: url.pathname || '/',
+        secure: url.protocol === 'https:'
+      };
+    } catch (error) {
+      return null;
+    }
+  }
+
+  const match = /^(tcp|http):([^:]+):([0-9]{1,5})(\/.*)?$/i.exec(text);
+  if (!match) {
+    return null;
+  }
+
+  const protocol = normalizeServiceProtocol(match[1]);
+  const host = normalizeHost(match[2]);
+  const port = Number(match[3]);
+  const path = truncate(match[4] || '/', 128);
+
+  if (!protocol || !host || port < 1 || port > MAX_PROBE_PORT) {
+    return null;
+  }
+
+  return { protocol, host, port, path, secure: false };
+}
+
+function normalizeServiceProtocol(value) {
+  const protocol = String(value || '').trim().toLowerCase();
+  return ['tcp', 'http'].includes(protocol) ? protocol : null;
+}
+
+function normalizeHost(value) {
+  const host = truncate(String(value || '').trim(), 128);
+  return /^[a-zA-Z0-9_.:-]+$/.test(host) ? host : null;
 }
 
 function truncate(value, maxLength) {

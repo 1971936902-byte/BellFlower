@@ -11,7 +11,7 @@
 - 虚拟 IP：从 `10.144.0.2` 开始自动分配，网段为 `10.144.0.0/24`。
 - 状态监控：心跳保持在线，超时自动离线。
 - 链路视图：UDP 能力可用时标记为 `p2p`，否则降级为 `relay`；提供独立 peers API 查询链路详情。
-- 联通性探测：提供 Demo 级 Ping/TCP/HTTP 探测 API，用控制面状态模拟多设备链路可达性。
+- 联通性探测：提供 Ping/TCP/HTTP 探测 API；目标设备上报服务端点时执行真实 HTTP/TCP 连接，否则回落到控制面模拟链路。
 - 控制台：浏览器打开服务地址即可查看设备列表。
 - CLI 客户端：用于模拟 Windows、iOS、Android 设备入网和心跳。
 
@@ -59,7 +59,8 @@ content-type: application/json
   "name": "Windows-PC",
   "platform": "windows",
   "capabilities": ["udp", "relay"],
-  "endpoints": ["udp:0.0.0.0:51820"]
+  "endpoints": ["udp:0.0.0.0:51820"],
+  "serviceEndpoints": ["http://127.0.0.1:3000"]
 }
 ```
 
@@ -113,7 +114,7 @@ content-type: application/json
 }
 ```
 
-在线设备会返回 `reachable=true`、链路模式、估算延迟和 Relay 区域。目标离线、源设备离线或设备不存在时返回 `409` 与失败原因。
+在线设备会返回 `reachable=true`、链路模式、估算延迟和 Relay 区域。若目标设备上报了匹配协议和端口的 `serviceEndpoints`，返回中的 `evidence` 为 `service-endpoint`，表示服务端真实连接过该端点；否则 `evidence` 为 `control-plane`，表示 Demo 控制面模拟探测。目标离线、源设备离线、设备不存在或真实端点不可达时返回 `409` 与失败原因。
 
 ## WebSocket 协议
 
