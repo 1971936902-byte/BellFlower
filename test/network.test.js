@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { allocateVirtualIp, buildPeerView, inferConnectionMode, keyToNetworkId, normalizeJoinRequest } from '../src/network.js';
+import { allocateVirtualIp, buildPeerView, inferConnectionMode, keyToNetworkId, normalizeJoinRequest, shouldReserveIp } from '../src/network.js';
 
 test('normalizes a valid join request', () => {
   const request = normalizeJoinRequest({ networkKey: 'secret-123', name: ' iPhone ', platform: 'ios' });
@@ -8,6 +8,19 @@ test('normalizes a valid join request', () => {
   assert.equal(request.networkKey, 'secret-123');
   assert.equal(request.name, 'iPhone');
   assert.equal(request.platform, 'ios');
+});
+
+test('normalizes optional stable device ids and caps list sizes', () => {
+  const request = normalizeJoinRequest({
+    networkKey: 'secret-123',
+    deviceId: 'ios-device-01',
+    endpoints: Array.from({ length: 12 }, (_, index) => `udp:10.0.0.${index}:51820`),
+    capabilities: Array.from({ length: 20 }, (_, index) => `cap-${index}`)
+  });
+
+  assert.equal(request.deviceId, 'ios-device-01');
+  assert.equal(request.endpoints.length, 8);
+  assert.equal(request.capabilities.length, 16);
 });
 
 test('rejects weak network keys', () => {
@@ -26,6 +39,28 @@ test('allocates the next free virtual ip in the demo cidr', () => {
   const ip = allocateVirtualIp([{ virtualIp: '10.144.0.2' }, { virtualIp: '10.144.0.3' }]);
 
   assert.equal(ip, '10.144.0.4');
+});
+
+test('reclaims virtual ips from expired offline leases', () => {
+  const now = Date.parse('2026-06-14T00:00:00.000Z');
+  const ip = allocateVirtualIp(
+    [
+      { virtualIp: '10.144.0.2', status: 'offline', lastSeenAt: '2026-06-12T00:00:00.000Z' },
+      { virtualIp: '10.144.0.3', status: 'online', lastSeenAt: '2026-06-14T00:00:00.000Z' }
+    ],
+    undefined,
+    { now, leaseReclaimMs: 60_000 }
+  );
+
+  assert.equal(ip, '10.144.0.2');
+});
+
+test('reserves online and recent offline leases', () => {
+  const now = Date.parse('2026-06-14T00:00:00.000Z');
+
+  assert.equal(shouldReserveIp({ virtualIp: '10.144.0.2', status: 'online', lastSeenAt: '2026-06-01T00:00:00.000Z' }, now, 1), true);
+  assert.equal(shouldReserveIp({ virtualIp: '10.144.0.2', status: 'offline', lastSeenAt: '2026-06-13T23:59:30.000Z' }, now, 60_000), true);
+  assert.equal(shouldReserveIp({ virtualIp: '10.144.0.2', status: 'offline', lastSeenAt: '2026-06-13T00:00:00.000Z' }, now, 60_000), false);
 });
 
 test('prefers p2p when both peers advertise udp capability', () => {

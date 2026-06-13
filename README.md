@@ -7,10 +7,10 @@
 ## 功能
 
 - 密钥组网：相同 `networkKey` 自动进入同一虚拟网络。
-- 设备身份：支持备注名称、平台、能力和候选端点上报。
+- 设备身份：支持稳定 `deviceId`、备注名称、平台、能力和候选端点上报；同一设备重连会复用虚拟 IP。
 - 虚拟 IP：从 `10.144.0.2` 开始自动分配，网段为 `10.144.0.0/24`。
 - 状态监控：心跳保持在线，超时自动离线。
-- 链路视图：UDP 能力可用时标记为 `p2p`，否则降级为 `relay`。
+- 链路视图：UDP 能力可用时标记为 `p2p`，否则降级为 `relay`；提供独立 peers API 查询链路详情。
 - 控制台：浏览器打开服务地址即可查看设备列表。
 - CLI 客户端：用于模拟 Windows、iOS、Android 设备入网和心跳。
 
@@ -54,6 +54,7 @@ content-type: application/json
 
 {
   "networkKey": "demo-secret",
+  "deviceId": "windows-pc-01",
   "name": "Windows-PC",
   "platform": "windows",
   "capabilities": ["udp", "relay"],
@@ -79,6 +80,12 @@ content-type: application/json
 GET /api/networks/{networkId}
 ```
 
+### 查询指定设备的链路视图
+
+```http
+GET /api/networks/{networkId}/peers/{deviceId}
+```
+
 ## WebSocket 协议
 
 连接 `ws://localhost:8787/ws` 后先发送 `join` 消息：
@@ -87,6 +94,7 @@ GET /api/networks/{networkId}
 {
   "type": "join",
   "networkKey": "demo-secret",
+  "deviceId": "iphone-01",
   "name": "iPhone",
   "platform": "ios",
   "capabilities": ["udp", "relay"],

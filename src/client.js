@@ -5,9 +5,11 @@ const server = process.env.BELLFLOWER_SERVER || 'http://localhost:8787';
 const networkKey = process.env.BELLFLOWER_KEY || 'demo-secret';
 const name = process.env.BELLFLOWER_NAME || os.hostname();
 const platform = process.platform;
+const deviceId = process.env.BELLFLOWER_DEVICE_ID || `${platform}-${name}`.replace(/[^a-zA-Z0-9_.:-]/g, '-');
 
 const joined = await post('/api/join', {
   networkKey,
+  deviceId,
   name,
   platform,
   capabilities: ['udp', 'relay'],

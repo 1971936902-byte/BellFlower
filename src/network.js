@@ -2,11 +2,16 @@ import crypto from 'node:crypto';
 
 export const DEFAULT_CIDR = '10.144.0.0/24';
 export const DEFAULT_RELAY_REGION = 'cn-light-relay';
+export const DEFAULT_LEASE_RECLAIM_MS = 24 * 60 * 60 * 1000;
+export const MAX_DEVICE_NAME_LENGTH = 64;
+export const MAX_PLATFORM_LENGTH = 32;
+export const MAX_ENDPOINTS = 8;
+export const MAX_CAPABILITIES = 16;
 
 export function normalizeJoinRequest(raw) {
   const body = typeof raw === 'string' ? JSON.parse(raw || '{}') : raw || {};
   const networkKey = String(body.networkKey || '').trim();
-  const name = String(body.name || '').trim();
+  const name = truncate(String(body.name || '').trim(), MAX_DEVICE_NAME_LENGTH);
 
   if (networkKey.length < 6) {
     throw new Error('networkKey must be at least 6 characters');
@@ -14,10 +19,11 @@ export function normalizeJoinRequest(raw) {
 
   return {
     networkKey,
+    deviceId: normalizeDeviceId(body.deviceId),
     name: name || defaultDeviceName(),
-    platform: String(body.platform || 'unknown').trim() || 'unknown',
-    endpoints: Array.isArray(body.endpoints) ? body.endpoints.map(String) : [],
-    capabilities: Array.isArray(body.capabilities) ? body.capabilities.map(String) : []
+    platform: truncate(String(body.platform || 'unknown').trim() || 'unknown', MAX_PLATFORM_LENGTH),
+    endpoints: normalizeStringList(body.endpoints, MAX_ENDPOINTS, 128),
+    capabilities: normalizeStringList(body.capabilities, MAX_CAPABILITIES, 32)
   };
 }
 
@@ -29,8 +35,14 @@ export function createDeviceId() {
   return crypto.randomUUID();
 }
 
-export function allocateVirtualIp(existingDevices, cidr = DEFAULT_CIDR) {
-  const used = new Set(existingDevices.map((device) => device.virtualIp));
+export function allocateVirtualIp(existingDevices, cidr = DEFAULT_CIDR, options = {}) {
+  const now = options.now || Date.now();
+  const leaseReclaimMs = options.leaseReclaimMs ?? DEFAULT_LEASE_RECLAIM_MS;
+  const used = new Set(
+    existingDevices
+      .filter((device) => shouldReserveIp(device, now, leaseReclaimMs))
+      .map((device) => device.virtualIp)
+  );
   const [prefix] = cidr.split('/');
   const parts = prefix.split('.').map(Number);
 
@@ -82,6 +94,18 @@ export function isStale(device, now = Date.now(), timeoutMs = 30_000) {
   return now - Date.parse(device.lastSeenAt) > timeoutMs;
 }
 
+export function shouldReserveIp(device, now = Date.now(), leaseReclaimMs = DEFAULT_LEASE_RECLAIM_MS) {
+  if (!device.virtualIp) {
+    return false;
+  }
+  if (!device.status || device.status === 'online') {
+    return true;
+  }
+
+  const lastSeen = Date.parse(device.lastSeenAt || device.joinedAt || 0);
+  return Number.isFinite(lastSeen) && now - lastSeen <= leaseReclaimMs;
+}
+
 function defaultDeviceName() {
   return `BellFlower-${crypto.randomBytes(2).toString('hex')}`;
 }
@@ -92,4 +116,24 @@ function hasCapability(device, capability) {
 
 function hasEndpoint(device, protocol) {
   return Array.isArray(device.endpoints) && device.endpoints.some((endpoint) => endpoint.startsWith(`${protocol}:`));
+}
+
+function normalizeDeviceId(value) {
+  const id = String(value || '').trim();
+  return /^[a-zA-Z0-9_.:-]{3,128}$/.test(id) ? id : null;
+}
+
+function normalizeStringList(value, maxItems, maxLength) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item) => truncate(String(item || '').trim(), maxLength))
+    .filter(Boolean)
+    .slice(0, maxItems);
+}
+
+function truncate(value, maxLength) {
+  return value.length > maxLength ? value.slice(0, maxLength) : value;
 }

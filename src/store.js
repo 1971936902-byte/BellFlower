@@ -1,10 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { DEFAULT_CIDR, allocateVirtualIp, createDeviceId, keyToNetworkId } from './network.js';
+import { DEFAULT_CIDR, DEFAULT_LEASE_RECLAIM_MS, allocateVirtualIp, createDeviceId, keyToNetworkId } from './network.js';
 
 export class BellFlowerStore {
   constructor(filePath = path.join(process.cwd(), 'data', 'bellflower.json')) {
     this.filePath = filePath;
+    this.leaseReclaimMs = Number(process.env.BELLFLOWER_LEASE_RECLAIM_MS || DEFAULT_LEASE_RECLAIM_MS);
     this.state = { networks: {} };
     this.load();
   }
@@ -14,23 +15,45 @@ export class BellFlowerStore {
       return;
     }
 
-    this.state = JSON.parse(fs.readFileSync(this.filePath, 'utf8'));
+    try {
+      this.state = JSON.parse(fs.readFileSync(this.filePath, 'utf8'));
+    } catch (error) {
+      const corruptPath = `${this.filePath}.corrupt-${Date.now()}`;
+      fs.renameSync(this.filePath, corruptPath);
+      this.state = { networks: {} };
+      this.corruptBackupPath = corruptPath;
+    }
   }
 
   save() {
     fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
-    fs.writeFileSync(this.filePath, JSON.stringify(this.state, null, 2));
+    const tempPath = `${this.filePath}.${process.pid}.tmp`;
+    fs.writeFileSync(tempPath, JSON.stringify(this.state, null, 2));
+    fs.renameSync(tempPath, this.filePath);
   }
 
   join(joinRequest) {
     const networkId = keyToNetworkId(joinRequest.networkKey);
     const network = this.ensureNetwork(networkId);
     const nowIso = new Date().toISOString();
+    const existingDevice = this.findReusableDevice(network, joinRequest);
+
+    if (existingDevice) {
+      existingDevice.name = joinRequest.name;
+      existingDevice.platform = joinRequest.platform;
+      existingDevice.status = 'online';
+      existingDevice.endpoints = joinRequest.endpoints;
+      existingDevice.capabilities = joinRequest.capabilities;
+      existingDevice.lastSeenAt = nowIso;
+      this.save();
+      return { networkId, network, device: existingDevice };
+    }
+
     const device = {
-      id: createDeviceId(),
+      id: joinRequest.deviceId || createDeviceId(),
       name: joinRequest.name,
       platform: joinRequest.platform,
-      virtualIp: allocateVirtualIp(network.devices, network.cidr),
+      virtualIp: allocateVirtualIp(network.devices, network.cidr, { leaseReclaimMs: this.leaseReclaimMs }),
       status: 'online',
       endpoints: joinRequest.endpoints,
       capabilities: joinRequest.capabilities,
@@ -111,5 +134,13 @@ export class BellFlowerStore {
     }
 
     return this.state.networks[networkId];
+  }
+
+  findReusableDevice(network, joinRequest) {
+    if (joinRequest.deviceId) {
+      return network.devices.find((device) => device.id === joinRequest.deviceId) || null;
+    }
+
+    return null;
   }
 }

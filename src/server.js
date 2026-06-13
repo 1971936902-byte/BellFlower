@@ -5,6 +5,7 @@ import { buildPeerView, isStale, normalizeJoinRequest } from './network.js';
 import { acceptWebSocket, decodeFrames, encodeFrame } from './websocket.js';
 
 const PORT = Number(process.env.PORT || 8787);
+const MAX_JSON_BODY_BYTES = Number(process.env.BELLFLOWER_MAX_BODY_BYTES || 1024 * 1024);
 const store = new BellFlowerStore(process.env.BELLFLOWER_DATA);
 const clients = new Map();
 
@@ -12,7 +13,9 @@ const server = http.createServer(async (req, res) => {
   try {
     await route(req, res);
   } catch (error) {
-    sendJson(res, 400, { error: error.message });
+    if (!res.headersSent && !res.destroyed) {
+      sendJson(res, error.statusCode || 400, { error: error.message });
+    }
   }
 });
 
@@ -44,14 +47,17 @@ server.on('upgrade', (req, socket) => {
     }
   });
 
-  socket.on('close', () => {
+  socket.on('error', () => cleanupSocketState(state));
+  socket.on('close', () => cleanupSocketState(state));
+});
+
+function cleanupSocketState(state) {
     if (state) {
       store.leave(state.networkId, state.device.id);
       clients.delete(state.device.id);
       broadcastNetwork(state.networkId);
     }
-  });
-});
+}
 
 server.listen(PORT, () => {
   console.log(`BellFlower control server listening on http://localhost:${PORT}`);
@@ -99,12 +105,24 @@ async function route(req, res) {
   }
 
   if (req.method === 'GET' && url.pathname.startsWith('/api/networks/')) {
-    const networkId = url.pathname.split('/').pop();
+    const parts = url.pathname.split('/').filter(Boolean);
+    const networkId = parts[2];
     const network = store.getNetwork(networkId);
     if (!network) {
       sendJson(res, 404, { error: 'network not found' });
       return;
     }
+
+    if (parts[3] === 'peers' && parts[4]) {
+      const device = store.findDevice(networkId, parts[4]);
+      if (!device) {
+        sendJson(res, 404, { error: 'device not found' });
+        return;
+      }
+      sendJson(res, 200, { networkId, deviceId: device.id, peers: buildPeerView(device, network.devices) });
+      return;
+    }
+
     sendJson(res, 200, publicNetwork(network));
     return;
   }
@@ -113,31 +131,43 @@ async function route(req, res) {
 }
 
 function handleSocketMessage(socket, state, payload) {
-  const message = JSON.parse(payload || '{}');
+  let message;
+  try {
+    message = JSON.parse(payload || '{}');
+  } catch (error) {
+    safeSocketWrite(socket, { type: 'error', error: 'invalid JSON message' });
+    return state;
+  }
 
   if (message.type === 'join') {
-    const joined = store.join(normalizeJoinRequest(message));
+    let joined;
+    try {
+      joined = store.join(normalizeJoinRequest(message));
+    } catch (error) {
+      safeSocketWrite(socket, { type: 'error', error: error.message });
+      return state;
+    }
     clients.set(joined.device.id, { socket, networkId: joined.networkId, deviceId: joined.device.id });
-    socket.write(encodeFrame({ type: 'joined', ...publicJoinResponse(joined) }));
+    safeSocketWrite(socket, { type: 'joined', ...publicJoinResponse(joined) });
     broadcastNetwork(joined.networkId);
     return { networkId: joined.networkId, device: joined.device };
   }
 
   if (!state) {
-    socket.write(encodeFrame({ type: 'error', error: 'join first' }));
+    safeSocketWrite(socket, { type: 'error', error: 'join first' });
     return state;
   }
 
   if (message.type === 'heartbeat') {
     const device = store.heartbeat(state.networkId, state.device.id, message);
     const network = store.getNetwork(state.networkId);
-    socket.write(encodeFrame({ type: 'heartbeat_ack', device }));
+    safeSocketWrite(socket, { type: 'heartbeat_ack', device });
     broadcastNetwork(state.networkId);
     return { networkId: state.networkId, device, network };
   }
 
   if (message.type === 'ping') {
-    socket.write(encodeFrame({ type: 'pong', sentAt: message.sentAt, receivedAt: new Date().toISOString() }));
+    safeSocketWrite(socket, { type: 'pong', sentAt: message.sentAt, receivedAt: new Date().toISOString() });
   }
 
   return state;
@@ -159,7 +189,9 @@ function broadcastNetwork(networkId) {
       continue;
     }
 
-    client.socket.write(encodeFrame({ type: 'peers', network: publicNetwork(network), peers: buildPeerView(device, network.devices) }));
+    if (!safeSocketWrite(client.socket, { type: 'peers', network: publicNetwork(network), peers: buildPeerView(device, network.devices) })) {
+      clients.delete(client.deviceId);
+    }
   }
 }
 
@@ -190,8 +222,25 @@ function publicNetwork(network) {
 function readJson(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
-    req.on('data', (chunk) => chunks.push(chunk));
+    let size = 0;
+    let rejected = false;
+    req.on('data', (chunk) => {
+      if (rejected) {
+        return;
+      }
+      size += chunk.length;
+      if (size > MAX_JSON_BODY_BYTES) {
+        rejected = true;
+        reject(Object.assign(new Error('request body too large'), { statusCode: 413 }));
+        req.resume();
+        return;
+      }
+      chunks.push(chunk);
+    });
     req.on('end', () => {
+      if (rejected) {
+        return;
+      }
       try {
         resolve(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'));
       } catch (error) {
@@ -199,6 +248,18 @@ function readJson(req) {
       }
     });
   });
+}
+
+function safeSocketWrite(socket, payload) {
+  try {
+    if (socket.destroyed || socket.writableEnded) {
+      return false;
+    }
+    socket.write(encodeFrame(payload));
+    return true;
+  } catch (error) {
+    return false;
+  }
 }
 
 function sendJson(res, statusCode, payload) {
@@ -280,7 +341,26 @@ function dashboardHtml() {
       render(network.devices);
     }
     function render(items) {
-      devices.innerHTML = items.map(device => '<tr><td>' + device.name + '</td><td><code>' + device.virtualIp + '</code></td><td class="' + device.status + '">' + device.status + '</td><td>' + device.lastSeenAt + '</td></tr>').join('');
+      devices.textContent = '';
+      for (const device of items) {
+        const row = document.createElement('tr');
+        appendCell(row, device.name);
+        const ip = document.createElement('td');
+        const code = document.createElement('code');
+        code.textContent = device.virtualIp;
+        ip.appendChild(code);
+        row.appendChild(ip);
+        const status = appendCell(row, device.status);
+        status.className = device.status;
+        appendCell(row, device.lastSeenAt);
+        devices.appendChild(row);
+      }
+    }
+    function appendCell(row, text) {
+      const cell = document.createElement('td');
+      cell.textContent = text;
+      row.appendChild(cell);
+      return cell;
     }
   </script>
 </body>
