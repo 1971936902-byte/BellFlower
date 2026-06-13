@@ -307,19 +307,147 @@ function dashboardHtml() {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>BellFlower 控制台</title>
   <style>
-    body { margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f6f7f9; color: #1f2937; }
-    main { max-width: 980px; margin: 0 auto; padding: 32px 20px; }
-    header { display: flex; justify-content: space-between; gap: 16px; align-items: center; margin-bottom: 24px; }
-    h1 { margin: 0; font-size: 28px; }
-    .panel { background: #fff; border: 1px solid #dde2ea; border-radius: 8px; padding: 18px; margin-bottom: 16px; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
-    input, button { min-height: 40px; border-radius: 6px; border: 1px solid #cbd5e1; padding: 0 12px; font-size: 14px; }
-    button { background: #1967d2; color: white; border-color: #1967d2; cursor: pointer; }
-    table { width: 100%; border-collapse: collapse; }
-    th, td { text-align: left; padding: 10px; border-bottom: 1px solid #e5e7eb; font-size: 14px; }
-    .online { color: #047857; font-weight: 700; }
-    .offline { color: #9ca3af; }
-    code { background: #eef2f7; padding: 2px 6px; border-radius: 4px; }
+    :root {
+      color-scheme: light;
+      --bg: #f4f6f8;
+      --surface: #ffffff;
+      --surface-soft: #f9fafb;
+      --line: #d8dee8;
+      --line-soft: #e7ebf0;
+      --text: #172033;
+      --muted: #64748b;
+      --primary: #1769aa;
+      --primary-strong: #0f4f86;
+      --ok: #0f8b5f;
+      --warn: #ad6a00;
+      --bad: #b42318;
+      --relay: #6d5bd0;
+      --shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    main { width: min(1180px, calc(100vw - 32px)); margin: 0 auto; padding: 24px 0 32px; }
+    header {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 16px;
+      align-items: end;
+      margin-bottom: 16px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--line);
+    }
+    h1 { margin: 0; font-size: 26px; line-height: 1.1; letter-spacing: 0; }
+    h2 { margin: 0 0 12px; font-size: 15px; letter-spacing: 0; }
+    label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 700; }
+    input, select, button {
+      min-height: 40px;
+      border-radius: 7px;
+      border: 1px solid var(--line);
+      padding: 0 11px;
+      font-size: 14px;
+      background: var(--surface);
+      color: var(--text);
+    }
+    input:focus, select:focus { outline: 2px solid rgba(23, 105, 170, 0.18); border-color: var(--primary); }
+    button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      border-color: var(--primary);
+      background: var(--primary);
+      color: #fff;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    button:hover { background: var(--primary-strong); border-color: var(--primary-strong); }
+    button.secondary { background: var(--surface); color: var(--primary); border-color: #b9cee1; }
+    button.secondary:hover { background: #edf5fb; }
+    button:disabled { opacity: 0.55; cursor: not-allowed; }
+    .subtle { margin-top: 6px; color: var(--muted); font-size: 13px; }
+    .shell { display: grid; grid-template-columns: 360px 1fr; gap: 16px; align-items: start; }
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+    }
+    .panel-body { padding: 16px; }
+    .stack { display: grid; gap: 16px; }
+    .form-grid { display: grid; gap: 12px; }
+    .two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .toolbar { display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      min-height: 30px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 0 10px;
+      background: var(--surface);
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #9ca3af; }
+    .dot.online { background: var(--ok); }
+    .dot.offline { background: var(--bad); }
+    .metrics { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid var(--line-soft); }
+    .metric { padding: 12px 14px; border-right: 1px solid var(--line-soft); }
+    .metric:last-child { border-right: 0; }
+    .metric span { display: block; color: var(--muted); font-size: 12px; font-weight: 700; }
+    .metric strong { display: block; margin-top: 4px; font-size: 18px; }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; min-width: 680px; }
+    th, td { text-align: left; padding: 12px 14px; border-bottom: 1px solid var(--line-soft); font-size: 14px; }
+    th { color: var(--muted); font-size: 12px; background: var(--surface-soft); }
+    tr[aria-selected="true"] { background: #eef7fb; }
+    tr.device-row { cursor: pointer; }
+    tr.device-row:hover { background: #f6fbfe; }
+    code { background: #eef2f7; padding: 3px 6px; border-radius: 5px; }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      border-radius: 999px;
+      padding: 0 9px;
+      font-size: 12px;
+      font-weight: 800;
+    }
+    .badge.online { background: #e8f7ef; color: var(--ok); }
+    .badge.offline { background: #feeceb; color: var(--bad); }
+    .badge.p2p { background: #e8f2fb; color: var(--primary); }
+    .badge.relay { background: #f2effb; color: var(--relay); }
+    .result {
+      min-height: 94px;
+      display: grid;
+      gap: 8px;
+      align-content: center;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface-soft);
+      padding: 14px;
+    }
+    .result strong { font-size: 17px; }
+    .result.ok { border-color: #a7dfc5; background: #f1fbf6; }
+    .result.fail { border-color: #f2b8b5; background: #fff4f3; }
+    .empty { padding: 24px 14px; color: var(--muted); text-align: center; }
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+    @media (max-width: 900px) {
+      main { width: min(100vw - 20px, 720px); padding-top: 16px; }
+      header, .shell, .two { grid-template-columns: 1fr; }
+      header { align-items: start; }
+      .metrics { grid-template-columns: 1fr; }
+      .metric { border-right: 0; border-bottom: 1px solid var(--line-soft); }
+      .metric:last-child { border-bottom: 0; }
+    }
   </style>
 </head>
 <body>
@@ -327,67 +455,304 @@ function dashboardHtml() {
     <header>
       <div>
         <h1>风铃草 BellFlower</h1>
-        <div>轻量控制服务：设备入网、虚拟 IP、在线状态与链路模式同步</div>
+        <div class="subtle">跨端虚拟组网 Demo 控制台</div>
       </div>
-      <code id="health">checking...</code>
+      <div class="status-pill"><span id="healthDot" class="dot"></span><span id="health">checking</span></div>
     </header>
-    <section class="panel">
-      <form id="join" class="grid">
-        <input name="networkKey" value="demo-secret" placeholder="组网密钥" minlength="6" required>
-        <input name="name" value="Windows-PC" placeholder="设备备注">
-        <input name="platform" value="windows" placeholder="平台">
-        <button type="submit">加入网络</button>
-      </form>
-    </section>
-    <section class="panel">
-      <div id="summary">尚未入网</div>
-      <table>
-        <thead><tr><th>设备</th><th>虚拟 IP</th><th>状态</th><th>最后心跳</th></tr></thead>
-        <tbody id="devices"></tbody>
-      </table>
-    </section>
+    <div class="shell">
+      <aside class="stack">
+        <section class="panel">
+          <div class="panel-body">
+            <div class="toolbar">
+              <h2>设备入网</h2>
+              <span id="joinState" class="status-pill"><span class="dot"></span><span>未连接</span></span>
+            </div>
+            <form id="join" class="form-grid">
+              <label>组网密钥
+                <input name="networkKey" value="demo-secret" minlength="6" required>
+              </label>
+              <label>设备 ID
+                <input name="deviceId" value="windows-pc-01" pattern="[a-zA-Z0-9_.:-]{3,128}" required>
+              </label>
+              <div class="two">
+                <label>设备备注
+                  <input name="name" value="Windows-PC">
+                </label>
+                <label>平台
+                  <select name="platform">
+                    <option value="windows">Windows</option>
+                    <option value="ios">iOS</option>
+                    <option value="android">Android</option>
+                    <option value="darwin">macOS</option>
+                    <option value="linux">Linux</option>
+                  </select>
+                </label>
+              </div>
+              <button type="submit"><span aria-hidden="true">+</span><span>加入网络</span></button>
+            </form>
+          </div>
+          <div class="metrics">
+            <div class="metric"><span>网络</span><strong id="metricNetwork">--</strong></div>
+            <div class="metric"><span>本机 IP</span><strong id="metricIp">--</strong></div>
+            <div class="metric"><span>在线设备</span><strong id="metricOnline">0</strong></div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-body stack">
+            <div class="toolbar">
+              <h2>联通性探测</h2>
+              <button id="refresh" class="secondary" type="button">刷新</button>
+            </div>
+            <label>目标设备
+              <select id="targetDevice" disabled></select>
+            </label>
+            <div class="two">
+              <label>协议
+                <select id="probeProtocol">
+                  <option value="icmp">Ping</option>
+                  <option value="tcp">TCP</option>
+                  <option value="http">HTTP</option>
+                </select>
+              </label>
+              <label>端口
+                <input id="probePort" type="number" min="1" max="65535" value="3000">
+              </label>
+            </div>
+            <button id="probe" type="button" disabled><span aria-hidden="true">↔</span><span>开始探测</span></button>
+            <div id="probeResult" class="result">
+              <strong>等待设备入网</strong>
+              <span class="subtle">加入网络后可选择目标设备。</span>
+            </div>
+          </div>
+        </section>
+      </aside>
+
+      <section class="panel">
+        <div class="panel-body">
+          <div class="toolbar">
+            <div>
+              <h2>虚拟局域网</h2>
+              <div id="summary" class="subtle">尚未入网</div>
+            </div>
+            <span id="deviceCount" class="status-pill"><span class="dot online"></span><span>0 台设备</span></span>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>设备</th><th>平台</th><th>虚拟 IP</th><th>状态</th><th>链路</th><th>最后心跳</th></tr></thead>
+            <tbody id="devices"><tr><td class="empty" colspan="6">尚无设备</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
   </main>
   <script>
     const health = document.querySelector('#health');
+    const healthDot = document.querySelector('#healthDot');
     const summary = document.querySelector('#summary');
     const devices = document.querySelector('#devices');
-    fetch('/health').then(r => r.json()).then(() => health.textContent = 'online');
+    const joinState = document.querySelector('#joinState');
+    const metricNetwork = document.querySelector('#metricNetwork');
+    const metricIp = document.querySelector('#metricIp');
+    const metricOnline = document.querySelector('#metricOnline');
+    const deviceCount = document.querySelector('#deviceCount');
+    const targetDevice = document.querySelector('#targetDevice');
+    const probeProtocol = document.querySelector('#probeProtocol');
+    const probePort = document.querySelector('#probePort');
+    const probeButton = document.querySelector('#probe');
+    const refreshButton = document.querySelector('#refresh');
+    const probeResult = document.querySelector('#probeResult');
+    const state = { networkId: null, device: null, devices: [], peers: [], timer: null };
+
+    fetch('/health')
+      .then(r => r.json())
+      .then(() => setHealth(true))
+      .catch(() => setHealth(false));
+
     document.querySelector('#join').addEventListener('submit', async (event) => {
       event.preventDefault();
       const form = new FormData(event.currentTarget);
       const payload = Object.fromEntries(form.entries());
       payload.capabilities = ['udp', 'relay'];
       payload.endpoints = ['udp:0.0.0.0:51820'];
-      const joined = await fetch('/api/join', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) }).then(r => r.json());
-      summary.textContent = '网络 ' + joined.networkId + ' / 本机虚拟 IP ' + joined.device.virtualIp;
-      render(joined.network.devices);
-      setInterval(() => refresh(joined.networkId), 2000);
+      setJoinState('连接中', false);
+      try {
+        const joined = await request('/api/join', { method: 'POST', body: payload });
+        state.networkId = joined.networkId;
+        state.device = joined.device;
+        state.devices = joined.network.devices;
+        state.peers = joined.peers;
+        renderAll();
+        setJoinState('已入网', true);
+        if (state.timer) clearInterval(state.timer);
+        state.timer = setInterval(refresh, 2000);
+      } catch (error) {
+        setJoinState('入网失败', false);
+        probeResult.className = 'result fail';
+        setProbeResult('入网失败', error.message);
+      }
     });
-    async function refresh(networkId) {
-      const network = await fetch('/api/networks/' + networkId).then(r => r.json());
-      render(network.devices);
+
+    refreshButton.addEventListener('click', refresh);
+    probeProtocol.addEventListener('change', () => {
+      probePort.disabled = probeProtocol.value === 'icmp';
+    });
+    probeButton.addEventListener('click', runProbe);
+
+    async function refresh() {
+      if (!state.networkId) return;
+      try {
+        const network = await request('/api/networks/' + state.networkId);
+        state.devices = network.devices;
+        if (state.device) {
+          const peers = await request('/api/networks/' + state.networkId + '/peers/' + state.device.id);
+          state.peers = peers.peers;
+        }
+        setHealth(true);
+        renderAll();
+      } catch (error) {
+        setHealth(false);
+        setJoinState('连接中断', false);
+        if (state.timer) {
+          clearInterval(state.timer);
+          state.timer = null;
+        }
+        probeResult.className = 'result fail';
+        setProbeResult('服务不可用', error.message);
+      }
     }
-    function render(items) {
+
+    async function runProbe() {
+      if (!state.networkId || !state.device || !targetDevice.value) return;
+      probeResult.className = 'result';
+      setProbeResult('探测中', '正在检查虚拟链路。');
+      try {
+        const payload = {
+          sourceDeviceId: state.device.id,
+          targetDeviceId: targetDevice.value,
+          protocol: probeProtocol.value,
+          port: Number(probePort.value)
+        };
+        const result = await request('/api/networks/' + state.networkId + '/probe', { method: 'POST', body: payload });
+        probeResult.className = 'result ok';
+        setProbeResult('链路可达', result.connectionMode.toUpperCase() + ' / ' + result.latencyMs + ' ms');
+      } catch (error) {
+        probeResult.className = 'result fail';
+        setProbeResult('链路不可达', error.message);
+      }
+    }
+
+    async function request(path, options = {}) {
+      const init = { method: options.method || 'GET', headers: {} };
+      if (options.body) {
+        init.headers['content-type'] = 'application/json';
+        init.body = JSON.stringify(options.body);
+      }
+      const response = await fetch(path, init);
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.reason || data.error || 'request failed');
+      }
+      return data;
+    }
+
+    function renderAll() {
+      const online = state.devices.filter(device => device.status === 'online').length;
+      summary.textContent = state.networkId ? '网络 ' + state.networkId + ' / 本机虚拟 IP ' + state.device.virtualIp : '尚未入网';
+      metricNetwork.textContent = state.networkId ? state.networkId.slice(0, 8) : '--';
+      metricIp.textContent = state.device ? state.device.virtualIp : '--';
+      metricOnline.textContent = String(online);
+      deviceCount.querySelector('span:last-child').textContent = state.devices.length + ' 台设备';
+      renderDevices();
+      renderTargets();
+    }
+
+    function renderDevices() {
       devices.textContent = '';
-      for (const device of items) {
+      if (!state.devices.length) {
         const row = document.createElement('tr');
+        const cell = document.createElement('td');
+        cell.className = 'empty';
+        cell.colSpan = 6;
+        cell.textContent = '尚无设备';
+        row.appendChild(cell);
+        devices.appendChild(row);
+        return;
+      }
+      for (const device of state.devices) {
+        const row = document.createElement('tr');
+        row.className = 'device-row';
+        row.setAttribute('aria-selected', state.device && device.id === state.device.id ? 'true' : 'false');
         appendCell(row, device.name);
+        appendCell(row, device.platform);
         const ip = document.createElement('td');
         const code = document.createElement('code');
         code.textContent = device.virtualIp;
         ip.appendChild(code);
         row.appendChild(ip);
-        const status = appendCell(row, device.status);
-        status.className = device.status;
+        const status = document.createElement('td');
+        status.appendChild(badge(device.status, device.status));
+        row.appendChild(status);
+        const peer = state.peers.find(item => item.id === device.id);
+        const link = document.createElement('td');
+        link.appendChild(peer ? badge(peer.connectionMode.toUpperCase(), peer.connectionMode) : badge(device.id === state.device?.id ? '本机' : '--', ''));
+        row.appendChild(link);
         appendCell(row, device.lastSeenAt);
         devices.appendChild(row);
       }
     }
+
+    function renderTargets() {
+      targetDevice.textContent = '';
+      const peers = state.devices.filter(device => state.device && device.id !== state.device.id);
+      for (const device of peers) {
+        const option = document.createElement('option');
+        option.value = device.id;
+        option.textContent = device.name + ' / ' + device.virtualIp;
+        targetDevice.appendChild(option);
+      }
+      const enabled = Boolean(state.networkId && peers.length);
+      targetDevice.disabled = !enabled;
+      probeButton.disabled = !enabled;
+      if (!enabled && state.networkId) {
+        setProbeResult('等待目标设备', '同一网络加入第二台设备后可探测。');
+      }
+    }
+
     function appendCell(row, text) {
       const cell = document.createElement('td');
       cell.textContent = text;
       row.appendChild(cell);
       return cell;
+    }
+
+    function badge(text, kind) {
+      const span = document.createElement('span');
+      span.className = kind ? 'badge ' + kind : 'badge';
+      span.textContent = text;
+      return span;
+    }
+
+    function setHealth(ok) {
+      health.textContent = ok ? 'online' : 'offline';
+      healthDot.className = ok ? 'dot online' : 'dot offline';
+    }
+
+    function setJoinState(text, online) {
+      joinState.querySelector('.dot').className = online ? 'dot online' : 'dot';
+      joinState.querySelector('span:last-child').textContent = text;
+    }
+
+    function setProbeResult(title, detail) {
+      probeResult.textContent = '';
+      const strong = document.createElement('strong');
+      strong.textContent = title;
+      const span = document.createElement('span');
+      span.className = 'subtle';
+      span.textContent = detail;
+      probeResult.appendChild(strong);
+      probeResult.appendChild(span);
     }
   </script>
 </body>
